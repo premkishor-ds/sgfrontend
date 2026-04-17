@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 
+const API_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
+
 interface Source {
   content: string;
   metadata: {
@@ -22,27 +24,100 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to the LATEST query bubble
+  const [placeholder, setPlaceholder] = useState("");
+  const typingSpeed = 100;
+  const deletingSpeed = 50;
+  const pauseTime = 2000;
+  
+  const exampleQueries = [
+    "Comment réparer un impact ?",
+    "Ma franchise est-elle remboursée ?",
+    "Où est le centre le plus proche ?",
+    "Prendre un rendez-vous en ligne",
+    "Prise en charge par l'assurance ?"
+  ];
+
+  const [exampleIndex, setExampleIndex] = useState(0);
+  const [charIndex, setCharIndex] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   useEffect(() => {
-    if (messages.length > 0) {
+    const currentFullText = exampleQueries[exampleIndex];
+    
+    const handleTyping = () => {
+      if (!isDeleting) {
+        if (charIndex < currentFullText.length) {
+          setPlaceholder(currentFullText.substring(0, charIndex + 1));
+          setCharIndex(prev => prev + 1);
+        } else {
+          setTimeout(() => setIsDeleting(true), pauseTime);
+        }
+      } else {
+        if (charIndex > 0) {
+          setPlaceholder(currentFullText.substring(0, charIndex - 1));
+          setCharIndex(prev => prev - 1);
+        } else {
+          setIsDeleting(false);
+          setExampleIndex((prev) => (prev + 1) % exampleQueries.length);
+        }
+      }
+    };
+
+    const timer = setTimeout(handleTyping, isDeleting ? deletingSpeed : typingSpeed);
+    return () => clearTimeout(timer);
+  }, [charIndex, isDeleting, exampleIndex]);
+
+  // Fetch suggestions from backend on mount
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const response = await fetch(`${API_URL}/suggestions`);
+        if (response.ok) {
+          const data = await response.json();
+          setSuggestions(data.suggestions || []);
+        } else {
+          console.error("Failed to fetch suggestions:", response.status);
+        }
+      } catch (err) {
+        console.error("Failed to fetch suggestions:", err);
+      }
+    };
+    fetchSuggestions();
+  }, []);
+
+  // Auto-scroll to the LATEST query bubble or loading state
+  useEffect(() => {
+    if (loading && loadingRef.current) {
+      loadingRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (messages.length > 0) {
       const lastMessage = document.getElementById(`message-${messages.length - 1}`);
       if (lastMessage) {
         lastMessage.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }
-  }, [messages]);
+  }, [messages, loading]);
 
   const cleanSourceContent = (content: string) => {
     if (!content) return "";
     let cleaned = content;
-    const tags = ["filename:", "title:", "description:", "metadata:", "content:", "heading:"];
-    tags.forEach(tag => {
-      if (cleaned.toLowerCase().startsWith(tag)) cleaned = cleaned.substring(tag.length);
+    
+    // Remove technical markers and JSON fragments
+    cleaned = cleaned.replace(/['"{}[\],]/g, ' '); 
+    cleaned = cleaned.replace(/[a-zA-Z0-9_-]+:\s*/g, ' '); // Remove keys like "title: "
+    cleaned = cleaned.replace(/\s+/g, ' ').trim(); // Collapse whitespace
+
+    // Remove repeated headers that often appear in data dumps
+    const boilerplate = ["France Pare-Brise", "document", "content", "metadata", "title"];
+    boilerplate.forEach(word => {
+        const regex = new RegExp(`^${word}`, 'i');
+        cleaned = cleaned.replace(regex, '').trim();
     });
-    cleaned = cleaned.replace(/\\n/g, "\n").trim();
-    return cleaned.length > 200 ? cleaned.substring(0, 200) + "..." : cleaned;
+
+    return cleaned.length > 180 ? cleaned.substring(0, 180) + "..." : cleaned;
   };
 
   const resetSearch = () => {
@@ -59,12 +134,15 @@ export default function Home() {
     setQuery("");
 
     try {
-      const response = await fetch("http://localhost:3001/search", {
+      const response = await fetch(`${API_URL}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: activeQuery }),
       });
-      if (!response.ok) throw new Error("Erreur serveur");
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erreur serveur: ${response.status} - ${errorText}`);
+      }
       const data = await response.json();
       
       setMessages((prev) => [...prev, {
@@ -73,9 +151,9 @@ export default function Home() {
         sources: data.sources || [],
         followup: data.followup || []
       }]);
-    } catch (err) {
-      console.error(err);
-      alert("Une erreur est survenue.");
+    } catch (err: any) {
+      console.error("Search error:", err);
+      alert(err.message || "Une erreur est survenue.");
     } finally {
       setLoading(false);
     }
@@ -88,18 +166,12 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#F4F7F9] flex flex-col font-sans text-gray-800">
-      {/* Dynamic Header */}
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 py-4">
         <div className="max-w-6xl mx-auto px-6 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-             <div className="flex flex-col border-l-4 border-[#C8102E] pl-4">
-                <span className="text-[#253662] font-black text-xl uppercase italic">
-                  France <span className="text-[#C8102E] not-italic">Pare-Brise</span>
-                </span>
-                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
-                  Trusted Knowledge Source
-                </span>
-             </div>
+          <div className="flex items-center gap-6">
+            <div className="h-10 w-auto flex items-center">
+              <img src="/logo.svg" alt="France Pare-Brise" className="h-full w-auto" />
+            </div>
           </div>
           {messages.length > 0 && (
             <button 
@@ -114,135 +186,104 @@ export default function Home() {
       </nav>
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-12 flex flex-col">
-        {/* Landing Hero */}
         {messages.length === 0 && !loading && (
-          <section className="mt-20 text-center animate-slide-up">
+          <section className="mt-20 text-center">
             <div className="mb-10 inline-flex items-center justify-center w-16 h-16 bg-[#253662] rounded-2xl shadow-lg">
                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
             </div>
             <h2 className="text-3xl font-bold text-[#253662] mb-4">France Pare-Brise Assistant</h2>
-            <p className="text-gray-500 max-w-lg mx-auto mb-10 font-medium">
-              Posez une question sur le vitrage automobile pour obtenir une réponse basée sur nos sources officielles.
-            </p>
             <form onSubmit={handleSearch} className="max-w-2xl mx-auto mb-16">
-              <div className="flex bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 overflow-hidden focus-within:ring-2 focus-within:ring-[#C8102E]/20 transition-all">
+              <div className="flex bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 overflow-hidden">
                 <input
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Posez une question..."
-                  className="flex-1 px-8 py-5 outline-none text-lg text-[#253662] font-medium"
+                  placeholder={placeholder}
+                  className="flex-1 px-8 py-5 outline-none text-lg text-[#253662]"
                 />
-                <button type="submit" className="bg-[#C8102E] text-white px-10 font-bold uppercase rounded-xl hover:bg-[#a50d26] transition-all">
+                <button type="submit" className="bg-[#253662] text-white px-10 font-bold uppercase rounded-xl hover:bg-black">
                   Démarrer
                 </button>
               </div>
             </form>
+            {suggestions.length > 0 && (
+              <div className="max-w-2xl mx-auto flex flex-wrap justify-center gap-3">
+                {suggestions.map((q, idx) => (
+                  <button key={idx} onClick={() => handleSearch(undefined, q)} className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium text-gray-600 hover:border-[#253662]">{q}</button>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
-        {/* Conversation Area */}
         <div className="space-y-16 pb-40">
           {messages.map((msg, idx) => (
-            <div key={idx} id={`message-${idx}`} className="space-y-8 animate-slide-up scroll-mt-28">
-              {/* User Query Bubble (Right Aligned) */}
+            <div key={idx} id={`message-${idx}`} className="space-y-8">
               <div className="flex justify-end">
                 <div className="bg-[#253662] text-white px-8 py-4 rounded-2xl shadow-xl max-w-[70%]">
                   <p className="text-lg font-bold">{msg.query}</p>
                 </div>
               </div>
-
-              {/* AI Response Card */}
-              <div className="bg-[#F8F9FA] rounded-[32px] border border-gray-100 p-10 relative shadow-[0_10px_40px_-10px_rgba(0,0,0,0.05)]">
+              <div className="bg-white rounded-[32px] border border-gray-100 p-10 relative shadow-sm">
                 <div className="flex items-center gap-2 mb-8">
-                  <div className="w-2 h-2 bg-[#C8102E] rounded-full"></div>
-                  <span className="text-gray-400 font-bold uppercase text-[10px] tracking-tight">Expert France Pare-Brise</span>
+                  <div className="w-2 h-2 bg-[#253662] rounded-full"></div>
+                  <span className="text-gray-400 font-bold uppercase text-[10px]">Expert France Pare-Brise</span>
                 </div>
-                
-                <button 
-                  onClick={() => copyToClipboard(msg.answer)}
-                  className="absolute right-8 top-8 w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-gray-400 hover:text-[#253662] hover:shadow-md transition-all"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m-3 8h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-                </button>
-                
-                <div className="text-[17px] leading-[1.8] text-gray-700 expert-answer">
+                <div className="text-[17px] leading-[1.8] text-gray-700">
                   <ReactMarkdown>{msg.answer}</ReactMarkdown>
                 </div>
-
-                {/* Verified Sources */}
                 {msg.sources.length > 0 && (
                   <div className="mt-16">
-                    <div className="flex items-center gap-4 mb-8">
-                       <div className="h-[1px] flex-1 bg-gray-200"></div>
-                       <span className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">Verified Sources</span>
-                       <div className="h-[1px] flex-1 bg-gray-200"></div>
-                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {msg.sources.map((s, si) => (
-                        <div key={si} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                          <div className="flex justify-between items-center mb-4">
-                             <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md text-[9px] font-black uppercase tracking-wider">Document</span>
-                             <span className="text-[9px] font-bold text-gray-300">#{si + 1}</span>
-                          </div>
-                          <p className="text-xs text-gray-500 font-medium leading-relaxed mb-1 capitalize">{s.metadata.original_title}</p>
-                          <p className="text-xs text-gray-400 italic">"{cleanSourceContent(s.content)}"</p>
+                      {msg.sources.filter((s, i, self) => i === self.findIndex(t => t.content === s.content)).slice(0, 4).map((s, si) => (
+                        <div key={si} className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+                          <p className="text-[11px] text-[#253662] font-black uppercase mb-2">{s.metadata.original_title}</p>
+                          <p className="text-[11px] text-gray-500 line-clamp-3 italic">"{cleanSourceContent(s.content)}"</p>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-                {/* Follow-up Questions - back inside for better layout safety */}
                 {msg.followup && msg.followup.length > 0 && (
-                  <div className="mt-12 pt-8 border-t border-gray-100">
-                    <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em] mb-4">Questions suggérées</p>
-                    <div className="flex flex-wrap gap-3">
-                      {msg.followup.map((fQ, fIdx) => (
-                        <button 
-                          key={fIdx} 
-                          onClick={() => handleSearch(undefined, fQ)}
-                          className="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-[#253662] hover:border-[#C8102E] hover:text-[#C8102E] shadow-sm transition-all"
-                        >
-                          {fQ}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="mt-12 flex flex-wrap gap-3">
+                    {msg.followup.map((fQ, fIdx) => (
+                      <button key={fIdx} disabled={loading} onClick={() => handleSearch(undefined, fQ)} className="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-[#253662] hover:border-[#253662]">{fQ}</button>
+                    ))}
                   </div>
                 )}
               </div>
             </div>
           ))}
-
           {loading && (
-            <div className="flex items-start gap-4 animate-pulse pt-8">
-              <div className="w-12 h-12 bg-gray-200 rounded-2xl"></div>
-              <div className="flex-1 space-y-4">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+            <div ref={loadingRef} className="flex items-start gap-6 py-12 animate-pulse">
+              <div className="w-12 h-12 bg-[#253662] rounded-2xl flex items-center justify-center">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce"></span>
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                </div>
+              </div>
+              <div className="flex-1 space-y-4 pt-1">
+                <span className="text-[#253662] font-black uppercase text-[10px]">Réflexion en cours...</span>
               </div>
             </div>
           )}
         </div>
       </main>
 
-      {/* Fixed BOTTOM Search Bar - specifically requested to move back */}
       {(messages.length > 0 || loading) && (
-        <div className="fixed bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-[#F4F7F9] via-[#F4F7F9] to-transparent z-40">
+        <div className="fixed bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-[#F4F7F9] to-transparent">
           <form onSubmit={handleSearch} className="max-w-4xl mx-auto">
-            <div className="flex bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-gray-100 p-2 overflow-hidden">
+            <div className="flex bg-white rounded-2xl shadow-2xl border border-gray-100 p-2">
               <input
                 type="text"
                 disabled={loading}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Posez une question de suivi..."
-                className="flex-1 px-8 py-4 outline-none text-[#253662] font-medium"
+                placeholder={placeholder}
+                className="flex-1 px-8 py-4 outline-none text-[#253662]"
               />
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="bg-[#253662] text-white w-14 h-14 rounded-xl flex items-center justify-center hover:bg-black transition-all disabled:opacity-50"
-              >
+              <button type="submit" disabled={loading} className="bg-[#253662] text-white w-14 h-14 rounded-xl flex items-center justify-center hover:bg-black">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
               </button>
             </div>
