@@ -22,6 +22,7 @@ interface Message {
 
 export default function Home() {
   const [query, setQuery] = useState("");
+  const [currentQuery, setCurrentQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -130,6 +131,7 @@ export default function Home() {
     const activeQuery = forcedQuery || query;
     if (!activeQuery.trim()) return;
 
+    setCurrentQuery(activeQuery);
     setLoading(true);
     setQuery("");
 
@@ -156,6 +158,7 @@ export default function Home() {
       alert(err.message || "Une erreur est survenue.");
     } finally {
       setLoading(false);
+      setCurrentQuery("");
     }
   };
 
@@ -254,6 +257,13 @@ export default function Home() {
               </div>
             </div>
           ))}
+          {loading && currentQuery && (
+            <div className="flex justify-end mb-8">
+              <div className="bg-[#253662] text-white px-8 py-4 rounded-2xl shadow-xl max-w-[70%]">
+                <p className="text-lg font-bold">{currentQuery}</p>
+              </div>
+            </div>
+          )}
           {loading && (
             <div ref={loadingRef} className="flex items-start gap-6 py-12 animate-pulse">
               <div className="w-12 h-12 bg-[#253662] rounded-2xl flex items-center justify-center">
