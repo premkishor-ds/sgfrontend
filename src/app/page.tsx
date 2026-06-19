@@ -3,14 +3,22 @@
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 
-const API_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+───────────────────────────────────────────────────────────── */
+function getApiUrl() {
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
 
+/* ─────────────────────────────────────────────────────────────
+   Types
+───────────────────────────────────────────────────────────── */
 interface Source {
   content: string;
-  metadata: {
-    original_title: string;
-    source: string;
-  };
+  metadata: { original_title: string; source: string };
 }
 
 interface Message {
@@ -18,283 +26,431 @@ interface Message {
   answer: string;
   sources: Source[];
   followup: string[];
+  done: boolean;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   Component
+───────────────────────────────────────────────────────────── */
 export default function Home() {
+  const apiUrl = getApiUrl();
+
   const [query, setQuery] = useState("");
-  const [currentQuery, setCurrentQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const loadingRef = useRef<HTMLDivElement>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const [placeholder, setPlaceholder] = useState("");
-  const typingSpeed = 100;
-  const deletingSpeed = 50;
-  const pauseTime = 2000;
-  
+  /* ── Typewriter placeholder ── */
   const exampleQueries = [
-    "Comment réparer un impact ?",
-    "Ma franchise est-elle remboursée ?",
-    "Où est le centre le plus proche ?",
-    "Prendre un rendez-vous en ligne",
-    "Prise en charge par l'assurance ?"
+    "Où se trouve le magasin Glassdrive à Carcavelos ?",
+    "Quelle est la durée de réparation d'un pare-brise ?",
+    "Comment remplacer un pare-brise de camping-car ?",
+    "Glassdrive gère-t-elle la procédure avec l'assurance ?",
   ];
-
+  const [placeholder, setPlaceholder] = useState("");
   const [exampleIndex, setExampleIndex] = useState(0);
   const [charIndex, setCharIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    const currentFullText = exampleQueries[exampleIndex];
-    
-    const handleTyping = () => {
+    const current = exampleQueries[exampleIndex];
+    const speed = isDeleting ? 35 : 65;
+    const timer = setTimeout(() => {
       if (!isDeleting) {
-        if (charIndex < currentFullText.length) {
-          setPlaceholder(currentFullText.substring(0, charIndex + 1));
-          setCharIndex(prev => prev + 1);
+        if (charIndex < current.length) {
+          setPlaceholder("Ex: " + current.substring(0, charIndex + 1));
+          setCharIndex((p) => p + 1);
         } else {
-          setTimeout(() => setIsDeleting(true), pauseTime);
+          setTimeout(() => setIsDeleting(true), 2800);
         }
       } else {
         if (charIndex > 0) {
-          setPlaceholder(currentFullText.substring(0, charIndex - 1));
-          setCharIndex(prev => prev - 1);
+          setPlaceholder("Ex: " + current.substring(0, charIndex - 1));
+          setCharIndex((p) => p - 1);
         } else {
           setIsDeleting(false);
-          setExampleIndex((prev) => (prev + 1) % exampleQueries.length);
+          setExampleIndex((p) => (p + 1) % exampleQueries.length);
         }
       }
-    };
-
-    const timer = setTimeout(handleTyping, isDeleting ? deletingSpeed : typingSpeed);
+    }, speed);
     return () => clearTimeout(timer);
   }, [charIndex, isDeleting, exampleIndex]);
 
-  // Fetch suggestions from backend on mount
+  /* ── Fetch suggestions (on mount, no context) ── */
   useEffect(() => {
-    const fetchSuggestions = async () => {
-      try {
-        const response = await fetch(`${API_URL}/suggestions`);
-        if (response.ok) {
-          const data = await response.json();
-          setSuggestions(data.suggestions || []);
-        } else {
-          console.error("Failed to fetch suggestions:", response.status);
-        }
-      } catch (err) {
-        console.error("Failed to fetch suggestions:", err);
-      }
-    };
-    fetchSuggestions();
+    fetchSuggestions(null);
   }, []);
 
-  // Auto-scroll to the LATEST query bubble or loading state
+  /* ── Auto-scroll to bottom on new content ── */
   useEffect(() => {
-    if (loading && loadingRef.current) {
-      loadingRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    } else if (messages.length > 0) {
-      const lastMessage = document.getElementById(`message-${messages.length - 1}`);
-      if (lastMessage) {
-        lastMessage.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const cleanSourceContent = (content: string) => {
-    if (!content) return "";
-    let cleaned = content;
-    
-    // Remove technical markers and JSON fragments
-    cleaned = cleaned.replace(/['"{}[\],]/g, ' '); 
-    cleaned = cleaned.replace(/[a-zA-Z0-9_-]+:\s*/g, ' '); // Remove keys like "title: "
-    cleaned = cleaned.replace(/\s+/g, ' ').trim(); // Collapse whitespace
+  /* ─────────────────────────────────────────────────────────
+     Fetch suggestions helper
+  ───────────────────────────────────────────────────────── */
+  const fetchSuggestions = async (contextQuery: string | null) => {
+    setSuggestionsLoading(true);
+    try {
+      const url = contextQuery
+        ? `${apiUrl}/suggestions?context=${encodeURIComponent(contextQuery)}`
+        : `${apiUrl}/suggestions`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setSuggestions(data.suggestions || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch suggestions:", err);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
 
-    // Remove repeated headers that often appear in data dumps
-    const boilerplate = ["France Pare-Brise", "document", "content", "metadata", "title"];
-    boilerplate.forEach(word => {
-        const regex = new RegExp(`^${word}`, 'i');
-        cleaned = cleaned.replace(regex, '').trim();
-    });
+  /* ─────────────────────────────────────────────────────────
+     Search handler
+  ───────────────────────────────────────────────────────── */
+  const handleSearch = async (e?: React.FormEvent, forcedQuery?: string) => {
+    if (e) e.preventDefault();
+    const activeQuery = (forcedQuery || query).trim();
+    if (!activeQuery || loading) return;
 
-    return cleaned.length > 180 ? cleaned.substring(0, 180) + "..." : cleaned;
+    setLoading(true);
+    setQuery("");
+
+    // Append the new message (empty answer while streaming)
+    setMessages((prev) => [
+      ...prev,
+      { query: activeQuery, answer: "", sources: [], followup: [], done: false },
+    ]);
+
+    try {
+      const res = await fetch(`${apiUrl}/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: activeQuery }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("No readable stream.");
+
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+
+            if (data.type === "sources") {
+              setMessages((prev) => {
+                const next = [...prev];
+                next[next.length - 1] = { ...next[next.length - 1], sources: data.sources };
+                return next;
+              });
+            } else if (data.type === "token") {
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                // Strip any [FOLLOWUPS] marker and everything after it
+                const raw = (last.answer + data.token).split("[FOLLOWUPS]")[0].replace(/\[FOLLOWUPS\]/g, "");
+                next[next.length - 1] = { ...last, answer: raw };
+                return next;
+              });
+            } else if (data.type === "followup") {
+              // Strip "Question N:" / "Question N." prefixes the model sometimes adds
+              const cleanFollowup = (data.followup as string[]).map((q: string) =>
+                q.replace(/^question\s*\d+[:.\-]\s*/i, "").trim()
+              ).filter((q: string) => q.length > 3);
+              setMessages((prev) => {
+                const next = [...prev];
+                next[next.length - 1] = {
+                  ...next[next.length - 1],
+                  followup: cleanFollowup,
+                };
+                return next;
+              });
+            } else if (data.type === "done") {
+              setMessages((prev) => {
+                const next = [...prev];
+                next[next.length - 1] = { ...next[next.length - 1], done: true };
+                return next;
+              });
+            }
+          } catch {
+            /* skip malformed line */
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Search error:", err);
+      setMessages((prev) => prev.slice(0, -1));
+    } finally {
+      setLoading(false);
+      // Refresh suggestions based on the last query (async, non-blocking)
+      fetchSuggestions(activeQuery);
+    }
   };
 
   const resetSearch = () => {
     setMessages([]);
     setQuery("");
+    fetchSuggestions(null);
   };
 
-  const handleSearch = async (e?: React.FormEvent, forcedQuery?: string) => {
-    if (e) e.preventDefault();
-    const activeQuery = forcedQuery || query;
-    if (!activeQuery.trim()) return;
+  const copyToClipboard = (text: string) => navigator.clipboard.writeText(text);
 
-    setCurrentQuery(activeQuery);
-    setLoading(true);
-    setQuery("");
-
-    try {
-      const response = await fetch(`${API_URL}/search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: activeQuery }),
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erreur serveur: ${response.status} - ${errorText}`);
-      }
-      const data = await response.json();
-      
-      setMessages((prev) => [...prev, {
-        query: activeQuery,
-        answer: data.answer || "Désolé, je n'ai pas pu générer de réponse.",
-        sources: data.sources || [],
-        followup: data.followup || []
-      }]);
-    } catch (err: any) {
-      console.error("Search error:", err);
-      alert(err.message || "Une erreur est survenue.");
-    } finally {
-      setLoading(false);
-      setCurrentQuery("");
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("Copié dans le presse-papier !");
-  };
-
+  /* ─────────────────────────────────────────────────────────
+     Render
+  ───────────────────────────────────────────────────────── */
   return (
-    <div className="min-h-screen bg-[#F4F7F9] flex flex-col font-sans text-gray-800">
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 py-4">
-        <div className="max-w-6xl mx-auto px-6 flex justify-between items-center">
-          <div className="flex items-center gap-6">
-            <div className="h-10 w-auto flex items-center">
-              <img src="/logo.svg" alt="France Pare-Brise" className="h-full w-auto" />
+    <div className="min-h-screen flex flex-col font-sans text-slate-800">
+      {/* ── Sticky Header ── */}
+      <nav className="bg-white/90 backdrop-blur-md border-b border-slate-200/70 sticky top-0 z-50 py-3 px-6">
+        <div className="max-w-3xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="h-7 flex items-center">
+              <img src="/logo.svg" alt="Glassdrive" className="h-full w-auto object-contain" />
             </div>
+            <span className="h-4 w-px bg-slate-200" />
+            <span className="text-[10px] tracking-widest uppercase font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+              Smart Search
+            </span>
           </div>
           {messages.length > 0 && (
-            <button 
+            <button
               onClick={resetSearch}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-full text-[11px] font-bold text-gray-600 hover:bg-gray-100 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-white transition-all cursor-pointer"
             >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              NEW SEARCH
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+              </svg>
+              Nouvelle recherche
             </button>
           )}
         </div>
       </nav>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-12 flex flex-col">
+      {/* ── Main ── */}
+      <main className="flex-1 max-w-3xl mx-auto w-full px-4 md:px-8 pb-32">
+        {/* Welcome screen */}
         {messages.length === 0 && !loading && (
-          <section className="mt-20 text-center">
-            <div className="mb-10 inline-flex items-center justify-center w-16 h-16 bg-[#253662] rounded-2xl shadow-lg">
-               <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+          <section className="py-14 flex flex-col items-center text-center">
+            <div className="mb-5 inline-flex items-center justify-center w-14 h-14 bg-gradient-to-tr from-blue-600 to-indigo-700 rounded-2xl shadow-lg shadow-blue-400/20">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
             </div>
-            <h2 className="text-3xl font-bold text-[#253662] mb-4">France Pare-Brise Assistant</h2>
-            <form onSubmit={handleSearch} className="max-w-2xl mx-auto mb-16">
-              <div className="flex bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 overflow-hidden">
+            <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-2">
+              Comment puis-je vous aider ?
+            </h1>
+            <p className="text-sm text-slate-500 max-w-md mb-10 leading-relaxed">
+              Posez une question sur nos centres, services, horaires ou assurances.
+            </p>
+
+            {/* Search form */}
+            <form onSubmit={handleSearch} className="w-full max-w-2xl mb-10">
+              <div className="flex items-center bg-white rounded-2xl border border-slate-200 shadow-md p-1.5 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all duration-200">
+                <div className="pl-4 text-slate-400">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
                 <input
+                  id="main-search-input"
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={placeholder}
-                  className="flex-1 px-8 py-5 outline-none text-lg text-[#253662]"
+                  className="flex-1 px-4 py-3.5 outline-none text-sm text-slate-800 placeholder-slate-400 bg-transparent"
                 />
-                <button type="submit" className="bg-[#253662] text-white px-10 font-bold uppercase rounded-xl hover:bg-black">
-                  Démarrer
+                <button
+                  type="submit"
+                  disabled={!query.trim()}
+                  className="bg-blue-600 disabled:bg-slate-200 hover:bg-blue-700 text-white font-semibold text-sm px-5 py-3 rounded-xl transition-all duration-200 cursor-pointer"
+                >
+                  Rechercher
                 </button>
               </div>
             </form>
-            {suggestions.length > 0 && (
-              <div className="max-w-2xl mx-auto flex flex-wrap justify-center gap-3">
-                {suggestions.map((q, idx) => (
-                  <button key={idx} onClick={() => handleSearch(undefined, q)} className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium text-gray-600 hover:border-[#253662]">{q}</button>
-                ))}
+
+            {/* Suggestions */}
+            {suggestionsLoading ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" />
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:0.15s]" />
+                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:0.3s]" />
+                <span className="ml-1">Génération des suggestions…</span>
               </div>
-            )}
+            ) : suggestions.length > 0 ? (
+              <div className="w-full max-w-2xl">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400 block mb-3">
+                  Recherches suggérées
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {suggestions.map((q, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSearch(undefined, q)}
+                      className="px-4 py-3.5 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs font-medium text-slate-700 hover:text-slate-900 transition-all duration-200 shadow-sm flex items-start gap-2.5 cursor-pointer group"
+                    >
+                      <span className="mt-0.5 w-4 h-4 rounded-md bg-blue-50 group-hover:bg-blue-100 flex items-center justify-center text-blue-500 shrink-0 transition-all">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </span>
+                      <span className="leading-snug">{q}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </section>
         )}
 
-        <div className="space-y-16 pb-40">
+        {/* ── Chat feed ── */}
+        <div className="space-y-8 pt-6">
           {messages.map((msg, idx) => (
-            <div key={idx} id={`message-${idx}`} className="space-y-8">
+            <div key={idx} id={`message-${idx}`} className="space-y-4">
+              {/* User bubble */}
               <div className="flex justify-end">
-                <div className="bg-[#253662] text-white px-8 py-4 rounded-2xl shadow-xl max-w-[70%]">
-                  <p className="text-lg font-bold">{msg.query}</p>
+                <div className="bg-slate-800 text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm max-w-[78%]">
+                  <p className="text-sm font-medium leading-relaxed">{msg.query}</p>
                 </div>
               </div>
-              <div className="bg-white rounded-[32px] border border-gray-100 p-10 relative shadow-sm">
-                <div className="flex items-center gap-2 mb-8">
-                  <div className="w-2 h-2 bg-[#253662] rounded-full"></div>
-                  <span className="text-gray-400 font-bold uppercase text-[10px]">Expert France Pare-Brise</span>
+
+              {/* Assistant card */}
+              <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+                {/* Card header */}
+                <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-100 bg-slate-50/60">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Expert Glassdrive</span>
+                  </div>
+                  {msg.answer && (
+                    <button
+                      onClick={() => copyToClipboard(msg.answer)}
+                      className="text-slate-400 hover:text-slate-600 p-1 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                      title="Copier la réponse"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
-                <div className="text-[17px] leading-[1.8] text-gray-700">
-                  <ReactMarkdown>{msg.answer}</ReactMarkdown>
+
+                {/* Answer body */}
+                <div className="px-6 py-5">
+                  {msg.answer ? (
+                    msg.done ? (
+                      /* Streaming finished — render full markdown */
+                      <div className="expert-answer prose prose-sm max-w-none text-slate-700">
+                        <ReactMarkdown>{msg.answer}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      /* Still streaming — use plain text to avoid ReactMarkdown DOM reconciliation errors */
+                      <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                        {msg.answer}
+                      </p>
+                    )
+                  ) : (
+                    /* Loading dots — ONLY place loading shows */
+                    <div className="flex items-center gap-1.5 py-3">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce [animation-delay:0.15s]" />
+                      <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce [animation-delay:0.3s]" />
+                      <span className="ml-2 text-xs text-slate-400">Génération en cours…</span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Sources */}
                 {msg.sources.length > 0 && (
-                  <div className="mt-16">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {msg.sources.filter((s, i, self) => i === self.findIndex(t => t.content === s.content)).slice(0, 4).map((s, si) => (
-                        <div key={si} className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
-                          <p className="text-[11px] text-[#253662] font-black uppercase mb-2">{s.metadata.original_title}</p>
-                          <p className="text-[11px] text-gray-500 line-clamp-3 italic">"{cleanSourceContent(s.content)}"</p>
-                        </div>
-                      ))}
+                  <div className="px-6 pb-4">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">Sources consultées</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {msg.sources
+                        .filter((s, i, self) => i === self.findIndex((t) => t.content === s.content))
+                        .slice(0, 4)
+                        .map((s, si) => (
+                          <div key={si} className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <p className="text-[10px] text-blue-600 font-bold uppercase mb-1 truncate">
+                              {s.metadata.original_title}
+                            </p>
+                            <p className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
+                              {s.content.slice(0, 120)}…
+                            </p>
+                          </div>
+                        ))}
                     </div>
                   </div>
                 )}
+
+                {/* Follow-up suggestions */}
                 {msg.followup && msg.followup.length > 0 && (
-                  <div className="mt-12 flex flex-wrap gap-3">
+                  <div className="px-6 pb-5 flex flex-wrap gap-2">
                     {msg.followup.map((fQ, fIdx) => (
-                      <button key={fIdx} disabled={loading} onClick={() => handleSearch(undefined, fQ)} className="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-[#253662] hover:border-[#253662]">{fQ}</button>
+                      <button
+                        key={fIdx}
+                        disabled={loading}
+                        onClick={() => handleSearch(undefined, fQ)}
+                        className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 rounded-xl text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {fQ}
+                      </button>
                     ))}
                   </div>
                 )}
               </div>
             </div>
           ))}
-          {loading && currentQuery && (
-            <div className="flex justify-end mb-8">
-              <div className="bg-[#253662] text-white px-8 py-4 rounded-2xl shadow-xl max-w-[70%]">
-                <p className="text-lg font-bold">{currentQuery}</p>
-              </div>
-            </div>
-          )}
-          {loading && (
-            <div ref={loadingRef} className="flex items-start gap-6 py-12 animate-pulse">
-              <div className="w-12 h-12 bg-[#253662] rounded-2xl flex items-center justify-center">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce"></span>
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                </div>
-              </div>
-              <div className="flex-1 space-y-4 pt-1">
-                <span className="text-[#253662] font-black uppercase text-[10px]">Réflexion en cours...</span>
-              </div>
-            </div>
-          )}
+
+          {/* Follow-ups live inside each message card — no duplicate panel here */}
+
+          <div ref={bottomRef} />
         </div>
       </main>
 
-      {(messages.length > 0 || loading) && (
-        <div className="fixed bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-[#F4F7F9] to-transparent">
-          <form onSubmit={handleSearch} className="max-w-4xl mx-auto">
-            <div className="flex bg-white rounded-2xl shadow-2xl border border-gray-100 p-2">
+      {/* ── Floating bottom input (shown only when conversation is active) ── */}
+      {messages.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#F8FAFC] via-[#F8FAFC]/95 to-transparent px-4 pt-4 pb-5">
+          <form onSubmit={handleSearch} className="max-w-3xl mx-auto">
+            <div className="flex items-center bg-white rounded-2xl border border-slate-200 shadow-md p-1.5 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
               <input
+                id="bottom-search-input"
                 type="text"
                 disabled={loading}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={placeholder}
-                className="flex-1 px-8 py-4 outline-none text-[#253662]"
+                placeholder={loading ? "Génération en cours…" : placeholder}
+                className="flex-1 px-4 py-2.5 outline-none text-sm text-slate-800 placeholder-slate-400 bg-transparent disabled:opacity-60"
               />
-              <button type="submit" disabled={loading} className="bg-[#253662] text-white w-14 h-14 rounded-xl flex items-center justify-center hover:bg-black">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+              <button
+                type="submit"
+                disabled={loading || !query.trim()}
+                className="bg-blue-600 disabled:bg-slate-200 text-white w-10 h-10 rounded-xl flex items-center justify-center hover:bg-blue-700 transition-all cursor-pointer disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                )}
               </button>
             </div>
           </form>
