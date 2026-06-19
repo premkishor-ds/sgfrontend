@@ -40,6 +40,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<"idle" | "requesting" | "granted" | "denied">("idle");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   /* ── Typewriter placeholder ── */
@@ -88,6 +90,35 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  /* ── Geolocation helpers ── */
+  const LOCATION_KEYWORDS = [
+    "near me", "nearby", "nearest", "closest", "around me", "my location",
+    "près de moi", "proche de moi", "autour de moi", "le plus proche",
+    "perto de mim", "perto", "localização",
+  ];
+
+  const isLocationQuery = (q: string) =>
+    LOCATION_KEYWORDS.some((kw) => q.toLowerCase().includes(kw));
+
+  const requestGeolocation = (): Promise<{ lat: number; lng: number } | null> =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
+      setLocationStatus("requesting");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserLocation(loc);
+          setLocationStatus("granted");
+          resolve(loc);
+        },
+        () => {
+          setLocationStatus("denied");
+          resolve(null);
+        },
+        { timeout: 6000, maximumAge: 60000 }
+      );
+    });
+
   /* ─────────────────────────────────────────────────────────
      Fetch suggestions helper
   ───────────────────────────────────────────────────────── */
@@ -120,6 +151,12 @@ export default function Home() {
     setLoading(true);
     setQuery("");
 
+    // If query mentions location keywords, request geolocation first
+    let location: { lat: number; lng: number } | null = userLocation;
+    if (isLocationQuery(activeQuery) && !userLocation) {
+      location = await requestGeolocation();
+    }
+
     // Append the new message (empty answer while streaming)
     setMessages((prev) => [
       ...prev,
@@ -130,7 +167,7 @@ export default function Home() {
       const res = await fetch(`${apiUrl}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: activeQuery }),
+        body: JSON.stringify({ query: activeQuery, location }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
 
@@ -282,6 +319,25 @@ export default function Home() {
                   Rechercher
                 </button>
               </div>
+              {/* Location status badge below main search form */}
+              {locationStatus === "requesting" && (
+                <p className="mt-2.5 text-xs text-blue-500 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                  Demande de localisation en cours…
+                </p>
+              )}
+              {locationStatus === "granted" && userLocation && (
+                <p className="mt-2.5 text-xs text-emerald-600 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                  Localisation détectée ({userLocation.lat.toFixed(3)}, {userLocation.lng.toFixed(3)})
+                </p>
+              )}
+              {locationStatus === "denied" && (
+                <p className="mt-2.5 text-xs text-amber-500 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  Accès à la localisation refusé — résultats non personnalisés
+                </p>
+              )}
             </form>
 
             {/* Suggestions */}
@@ -425,6 +481,23 @@ export default function Home() {
       {/* ── Floating bottom input (shown only when conversation is active) ── */}
       {messages.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#F8FAFC] via-[#F8FAFC]/95 to-transparent px-4 pt-4 pb-5">
+          {/* Location badge in bottom bar */}
+          {locationStatus === "granted" && userLocation && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 font-semibold bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                Localisation active · {userLocation.lat.toFixed(3)}, {userLocation.lng.toFixed(3)}
+              </span>
+            </div>
+          )}
+          {locationStatus === "requesting" && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-blue-600 font-semibold bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1">
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                Demande de localisation…
+              </span>
+            </div>
+          )}
           <form onSubmit={handleSearch} className="max-w-3xl mx-auto">
             <div className="flex items-center bg-white rounded-2xl border border-slate-200 shadow-md p-1.5 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
               <input
