@@ -46,10 +46,10 @@ export default function Home() {
 
   /* ── Typewriter placeholder ── */
   const exampleQueries = [
-    "Où se trouve le magasin Glassdrive à Carcavelos ?",
+    "Où se trouve le magasin France Pare-Brise à Ennery ?",
     "Quelle est la durée de réparation d'un pare-brise ?",
     "Comment remplacer un pare-brise de camping-car ?",
-    "Glassdrive gère-t-elle la procédure avec l'assurance ?",
+    "France Pare-Brise gère-t-elle la procédure avec l'assurance ?",
   ];
   const [placeholder, setPlaceholder] = useState("");
   const [exampleIndex, setExampleIndex] = useState(0);
@@ -268,7 +268,7 @@ export default function Home() {
         <div className="max-w-3xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="h-7 flex items-center">
-              <img src="/logo.svg" alt="Glassdrive" className="h-full w-auto object-contain" />
+              <img src="/logo.png" alt="France Pare-Brise" className="h-full w-auto object-contain" />
             </div>
             <span className="h-4 w-px bg-slate-200" />
             <span className="text-[10px] tracking-widest uppercase font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
@@ -402,7 +402,7 @@ export default function Home() {
                 <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-100 bg-slate-50/60">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                    <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Expert Glassdrive</span>
+                    <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Expert France Pare-Brise</span>
                   </div>
                   {msg.answer && (
                     <button
