@@ -7,6 +7,11 @@ import ReactMarkdown from "react-markdown";
    Helpers
 ───────────────────────────────────────────────────────────── */
 function getApiUrl() {
+  // Use env variable when deployed (e.g. Netlify production)
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
+  }
+  // Fallback for local development
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
