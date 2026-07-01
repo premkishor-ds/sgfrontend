@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 
 /* ─────────────────────────────────────────────────────────────
@@ -17,6 +17,82 @@ function getApiUrl() {
   }
   return "http://localhost:8000";
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Linkify: auto-detect URLs and phone numbers in plain text
+───────────────────────────────────────────────────────────── */
+const URL_REGEX = /https?:\/\/[\w\-._~:/?#[\]@!$&'()*+,;=%]+/gi;
+const PHONE_REGEX = /(?:(?:\+|00)\d{1,3}[\s.-]?)?(?:\(?\d{1,4}\)?[\s.-]?){3,6}\d{2,4}/g;
+
+function linkifyText(text: string): React.ReactNode[] {
+  // Combine URL and phone patterns, keeping track of which matched
+  const combined = /https?:\/\/[\w\-._~:/?#[\]@!$&'()*+,;=%]+|(?:(?:\+|00)\d{1,3}[\s.-]?)?(?:\(?\d{1,4}\)?[\s.-]?){3,6}\d{2,4}/gi;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = combined.exec(text)) !== null) {
+    const matchStr = match[0];
+    // Only treat as phone if it has digits >= 7 and no slashes
+    const isUrl = /^https?:\/\//.test(matchStr);
+    const isPhone = !isUrl && /\d{7,}/.test(matchStr.replace(/[^\d]/g, ''));
+    if (!isUrl && !isPhone) continue;
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    if (isUrl) {
+      nodes.push(
+        <a key={key++} href={matchStr} target="_blank" rel="noopener noreferrer"
+           className="text-blue-600 underline hover:text-blue-800 break-all">
+          {matchStr}
+        </a>
+      );
+    } else {
+      const digits = matchStr.replace(/[^\d+]/g, '');
+      nodes.push(
+        <a key={key++} href={`tel:${digits}`}
+           className="text-blue-600 underline hover:text-blue-800 whitespace-nowrap">
+          {matchStr}
+        </a>
+      );
+    }
+    lastIndex = match.index + matchStr.length;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes.length ? nodes : [text];
+}
+
+/* Custom ReactMarkdown components with linkify */
+const markdownComponents = {
+  // Existing markdown links — open in new tab
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    if (!href) return <span>{children}</span>;
+    const isPhone = href.startsWith('tel:');
+    return (
+      <a href={href}
+         target={isPhone ? undefined : '_blank'}
+         rel={isPhone ? undefined : 'noopener noreferrer'}
+         className="text-blue-600 underline hover:text-blue-800">
+        {children}
+      </a>
+    );
+  },
+  // Plain text nodes — run linkify on them
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mb-2 last:mb-0">
+      {React.Children.map(children, (child) =>
+        typeof child === 'string' ? linkifyText(child) : child
+      )}
+    </p>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li>
+      {React.Children.map(children, (child) =>
+        typeof child === 'string' ? linkifyText(child) : child
+      )}
+    </li>
+  ),
+};
 
 /* ─────────────────────────────────────────────────────────────
    Types
@@ -428,7 +504,7 @@ export default function Home() {
                     msg.done ? (
                       /* Streaming finished — render full markdown */
                       <div className="expert-answer prose prose-sm max-w-none text-slate-700">
-                        <ReactMarkdown>{msg.answer}</ReactMarkdown>
+                        <ReactMarkdown components={markdownComponents as never}>{msg.answer}</ReactMarkdown>
                       </div>
                     ) : (
                       /* Still streaming — use plain text to avoid ReactMarkdown DOM reconciliation errors */
