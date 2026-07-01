@@ -191,14 +191,19 @@ export default function Home() {
 
             if (data.type === "sources") {
               setMessages((prev) => {
+                if (prev.length === 0) return prev;
                 const next = [...prev];
-                next[next.length - 1] = { ...next[next.length - 1], sources: data.sources };
+                const last = next[next.length - 1];
+                if (!last) return prev;
+                next[next.length - 1] = { ...last, sources: data.sources };
                 return next;
               });
             } else if (data.type === "token") {
               setMessages((prev) => {
+                if (prev.length === 0) return prev;
                 const next = [...prev];
                 const last = next[next.length - 1];
+                if (!last) return prev;
                 // Strip any [FOLLOWUPS] marker and everything after it
                 const raw = (last.answer + data.token).split("[FOLLOWUPS]")[0].replace(/\[FOLLOWUPS\]/g, "");
                 next[next.length - 1] = { ...last, answer: raw };
@@ -210,17 +215,23 @@ export default function Home() {
                 q.replace(/^question\s*\d+[:.\-]\s*/i, "").trim()
               ).filter((q: string) => q.length > 3);
               setMessages((prev) => {
+                if (prev.length === 0) return prev;
                 const next = [...prev];
+                const last = next[next.length - 1];
+                if (!last) return prev;
                 next[next.length - 1] = {
-                  ...next[next.length - 1],
+                  ...last,
                   followup: cleanFollowup,
                 };
                 return next;
               });
             } else if (data.type === "done") {
               setMessages((prev) => {
+                if (prev.length === 0) return prev;
                 const next = [...prev];
-                next[next.length - 1] = { ...next[next.length - 1], done: true };
+                const last = next[next.length - 1];
+                if (!last) return prev;
+                next[next.length - 1] = { ...last, done: true };
                 return next;
               });
             }
